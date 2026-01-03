@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>サイコロ三目並べ</title>
+    <title>サイコロ三目並べ（改）</title>
     <style>
         body {
             font-family: 'Helvetica Neue', Arial, sans-serif;
@@ -24,21 +24,33 @@
             padding: 15px;
             border-radius: 8px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            width: 300px;
+            width: 320px;
         }
 
         .status { font-size: 1.2em; font-weight: bold; margin-bottom: 10px; }
-        .dice-display { font-size: 1.1em; color: #555; height: 24px; }
+        .dice-display { font-size: 1.0em; color: #555; min-height: 24px; }
+        
+        /* 救済措置発生時のメッセージ強調 */
+        .dice-display.free-move {
+            color: #d35400;
+            font-weight: bold;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
 
         /* 盤面のグリッドレイアウト */
         .board-container {
             display: grid;
-            grid-template-columns: 40px 80px 80px 80px; /* ラベル幅 + 3列 */
-            grid-template-rows: 40px 80px 80px 80px;    /* ラベル高 + 3行 */
+            grid-template-columns: 40px 80px 80px 80px;
+            grid-template-rows: 40px 80px 80px 80px;
             gap: 5px;
         }
 
-        /* ラベルとセルの共通スタイル */
         .label, .cell {
             display: flex;
             align-items: center;
@@ -47,30 +59,25 @@
             border-radius: 4px;
         }
 
-        /* 行・列の数字ラベル */
         .label {
             background-color: #ddd;
             font-size: 1.2em;
             color: #555;
         }
         
-        /* 何もない左上の角 */
         .label.empty { background-color: transparent; }
 
-        /* ゲームのマス */
         .cell {
             background-color: #fff;
             border: 2px solid #ccc;
             font-size: 2.5em;
-            cursor: not-allowed; /* デフォルトはクリック不可 */
+            cursor: not-allowed;
             transition: background-color 0.2s;
         }
 
-        /* XとOの色 */
         .cell.x { color: #e74c3c; }
         .cell.o { color: #3498db; }
 
-        /* サイコロを振って選択可能になったマス */
         .cell.playable {
             background-color: #e8f5e9;
             border-color: #4caf50;
@@ -82,7 +89,6 @@
             background-color: #c8e6c9;
         }
 
-        /* ボタン類 */
         button {
             margin-top: 20px;
             padding: 10px 20px;
@@ -145,80 +151,83 @@
     </div>
 
     <script>
-        // ゲームの状態管理
         let currentPlayer = 'X';
         let gameActive = true;
         let board = ['', '', '', '', '', '', '', '', ''];
         let currentRoll = 0;
-        let waitingForMove = false; // サイコロを振った後、配置待ちの状態か
+        let waitingForMove = false;
 
-        // DOM要素の取得
         const statusDisplay = document.getElementById('status');
         const diceResultDisplay = document.getElementById('dice-result');
         const rollBtn = document.getElementById('roll-btn');
         const cells = document.querySelectorAll('.cell');
 
-        // サイコロの目と対応するインデックスのマッピング
-        // 1: 下の行 (インデックス 6,7,8)
-        // 2: 中の行 (インデックス 3,4,5)
-        // 3: 上の行 (インデックス 0,1,2)
-        // 4: 左の列 (インデックス 0,3,6)
-        // 5: 中の列 (インデックス 1,4,7)
-        // 6: 右の列 (インデックス 2,5,8)
         const diceMapping = {
-            1: [6, 7, 8],
-            2: [3, 4, 5],
-            3: [0, 1, 2],
-            4: [0, 3, 6],
-            5: [1, 4, 7],
-            6: [2, 5, 8]
+            1: [6, 7, 8], // 下行
+            2: [3, 4, 5], // 中行
+            3: [0, 1, 2], // 上行
+            4: [0, 3, 6], // 左列
+            5: [1, 4, 7], // 中列
+            6: [2, 5, 8]  // 右列
         };
 
-        // 勝利条件（通常の三目並べと同じ）
         const winningConditions = [
-            [0, 1, 2], [3, 4, 5], [6, 7, 8], // 横
-            [0, 3, 6], [1, 4, 7], [2, 5, 8], // 縦
-            [0, 4, 8], [2, 4, 6]             // 斜め
+            [0, 1, 2], [3, 4, 5], [6, 7, 8],
+            [0, 3, 6], [1, 4, 7], [2, 5, 8],
+            [0, 4, 8], [2, 4, 6]
         ];
 
-        // セルにクリックイベントを追加
         cells.forEach(cell => {
             cell.addEventListener('click', handleCellClick);
         });
 
-        // サイコロを振る処理
         function rollDice() {
             if (!gameActive || waitingForMove) return;
 
-            // 1〜6のランダムな数字
             currentRoll = Math.floor(Math.random() * 6) + 1;
+            diceResultDisplay.classList.remove('free-move');
             
-            diceResultDisplay.textContent = `出た目: ${currentRoll}`;
+            // 指定された行・列のインデックスを取得
+            const targetIndices = diceMapping[currentRoll];
             
-            // 置ける場所があるかチェック
-            const validIndices = diceMapping[currentRoll];
-            const availableMoves = validIndices.filter(index => board[index] === '');
+            // その中で空いているマスを探す
+            const validMoves = targetIndices.filter(index => board[index] === '');
 
-            if (availableMoves.length > 0) {
-                // 置ける場所がある場合
-                waitingForMove = true;
-                rollBtn.disabled = true; // 配置するまでボタン無効
-                highlightPlayableCells(validIndices);
-                statusDisplay.textContent = `手番: ${currentPlayer} (配置してください)`;
+            if (validMoves.length > 0) {
+                // 通常ルール：指定された場所に空きがある
+                diceResultDisplay.textContent = `出た目: ${currentRoll}`;
+                setupTurn(validMoves);
             } else {
-                // 置ける場所がない場合（パス）
-                diceResultDisplay.textContent = `出た目: ${currentRoll} (置ける場所がありません)`;
-                setTimeout(() => {
-                    switchPlayer(); // 自動で交代
-                }, 1500);
+                // 救済ルール：指定場所が埋まっている -> 全ての空きマスを探す
+                const allEmptyIndices = [];
+                board.forEach((cell, index) => {
+                    if (cell === '') allEmptyIndices.push(index);
+                });
+
+                if (allEmptyIndices.length > 0) {
+                    // どこでも置けるモード発動
+                    diceResultDisplay.textContent = `出た目: ${currentRoll} (埋まっているため、どこでも置けます！)`;
+                    diceResultDisplay.classList.add('free-move');
+                    setupTurn(allEmptyIndices);
+                } else {
+                    // 全マス埋まっている（引き分け処理へ）
+                    checkResult();
+                }
             }
         }
 
-        // 置けるマスをハイライト表示
+        // 配置フェーズへの移行処理
+        function setupTurn(playableIndices) {
+            waitingForMove = true;
+            rollBtn.disabled = true;
+            statusDisplay.textContent = `手番: ${currentPlayer} (配置してください)`;
+            highlightPlayableCells(playableIndices);
+        }
+
         function highlightPlayableCells(indices) {
             cells.forEach(cell => cell.classList.remove('playable'));
-            
             indices.forEach(index => {
+                // 念のためここでも空きチェック
                 if (board[index] === '') {
                     const targetCell = document.querySelector(`.cell[data-index="${index}"]`);
                     targetCell.classList.add('playable');
@@ -226,17 +235,14 @@
             });
         }
 
-        // マスをクリックした時の処理
         function handleCellClick(e) {
             const clickedCell = e.target;
             const clickedCellIndex = parseInt(clickedCell.getAttribute('data-index'));
 
-            // ゲーム終了済み、まだ振っていない、または置けるマスでない場合は無視
             if (!gameActive || !waitingForMove || !clickedCell.classList.contains('playable')) {
                 return;
             }
 
-            // 盤面更新
             updateCell(clickedCell, clickedCellIndex);
             checkResult();
         }
@@ -244,9 +250,8 @@
         function updateCell(cell, index) {
             board[index] = currentPlayer;
             cell.textContent = currentPlayer;
-            cell.classList.add(currentPlayer.toLowerCase()); // 色付け用クラス
+            cell.classList.add(currentPlayer.toLowerCase());
             
-            // ハイライト解除
             cells.forEach(c => c.classList.remove('playable'));
             waitingForMove = false;
             rollBtn.disabled = false;
@@ -257,6 +262,7 @@
             statusDisplay.textContent = `手番: ${currentPlayer}`;
             if (!waitingForMove) {
                 diceResultDisplay.textContent = `サイコロを振ってください`;
+                diceResultDisplay.classList.remove('free-move');
             }
         }
 
@@ -269,9 +275,7 @@
                 let b = board[winCondition[1]];
                 let c = board[winCondition[2]];
 
-                if (a === '' || b === '' || c === '') {
-                    continue;
-                }
+                if (a === '' || b === '' || c === '') continue;
                 if (a === b && b === c) {
                     roundWon = true;
                     break;
@@ -281,14 +285,15 @@
             if (roundWon) {
                 statusDisplay.textContent = `勝者: ${currentPlayer}！ 🎉`;
                 diceResultDisplay.textContent = "ゲーム終了";
+                diceResultDisplay.classList.remove('free-move');
                 gameActive = false;
                 rollBtn.disabled = true;
                 return;
             }
 
-            // 引き分け判定（盤面が全て埋まった場合）
             if (!board.includes('')) {
                 statusDisplay.textContent = `引き分け！`;
+                diceResultDisplay.textContent = "全てのマスが埋まりました";
                 gameActive = false;
                 rollBtn.disabled = true;
                 return;
@@ -306,6 +311,7 @@
             
             statusDisplay.textContent = `手番: X (先手)`;
             diceResultDisplay.textContent = `サイコロを振ってください`;
+            diceResultDisplay.classList.remove('free-move');
             rollBtn.disabled = false;
 
             cells.forEach(cell => {
