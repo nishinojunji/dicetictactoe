@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>サイコロ三目並べ</title>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f2f5;
+            color: #333;
+            margin-top: 30px;
+        }
+
+        h1 { margin-bottom: 10px; }
+
+        .game-info {
+            margin-bottom: 20px;
+            text-align: center;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            width: 300px;
+        }
+
+        .status { font-size: 1.2em; font-weight: bold; margin-bottom: 10px; }
+        .dice-display { font-size: 1.1em; color: #555; height: 24px; }
+
+        /* 盤面のグリッドレイアウト */
+        .board-container {
+            display: grid;
+            grid-template-columns: 40px 80px 80px 80px; /* ラベル幅 + 3列 */
+            grid-template-rows: 40px 80px 80px 80px;    /* ラベル高 + 3行 */
+            gap: 5px;
+        }
+
+        /* ラベルとセルの共通スタイル */
+        .label, .cell {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            border-radius: 4px;
+        }
+
+        /* 行・列の数字ラベル */
+        .label {
+            background-color: #ddd;
+            font-size: 1.2em;
+            color: #555;
+        }
+        
+        /* 何もない左上の角 */
+        .label.empty { background-color: transparent; }
+
+        /* ゲームのマス */
+        .cell {
+            background-color: #fff;
+            border: 2px solid #ccc;
+            font-size: 2.5em;
+            cursor: not-allowed; /* デフォルトはクリック不可 */
+            transition: background-color 0.2s;
+        }
+
+        /* XとOの色 */
+        .cell.x { color: #e74c3c; }
+        .cell.o { color: #3498db; }
+
+        /* サイコロを振って選択可能になったマス */
+        .cell.playable {
+            background-color: #e8f5e9;
+            border-color: #4caf50;
+            cursor: pointer;
+            box-shadow: inset 0 0 10px rgba(76, 175, 80, 0.2);
+        }
+
+        .cell.playable:hover {
+            background-color: #c8e6c9;
+        }
+
+        /* ボタン類 */
+        button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 1em;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background-color: #333;
+            color: white;
+            transition: opacity 0.2s;
+        }
+        button:hover { opacity: 0.8; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+
+        #roll-btn {
+            background-color: #f39c12;
+            width: 100%;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+
+        .controls { width: 300px; margin-top: 10px; }
+
+    </style>
+</head>
+<body>
+
+    <h1>サイコロ三目並べ</h1>
+
+    <div class="game-info">
+        <div class="status" id="status">手番: X (先手)</div>
+        <div class="dice-display" id="dice-result">サイコロを振ってください</div>
+    </div>
+
+    <div class="board-container">
+        <div class="label empty"></div>
+        <div class="label">4</div>
+        <div class="label">5</div>
+        <div class="label">6</div>
+
+        <div class="label">3</div>
+        <div class="cell" data-index="0"></div>
+        <div class="cell" data-index="1"></div>
+        <div class="cell" data-index="2"></div>
+
+        <div class="label">2</div>
+        <div class="cell" data-index="3"></div>
+        <div class="cell" data-index="4"></div>
+        <div class="cell" data-index="5"></div>
+
+        <div class="label">1</div>
+        <div class="cell" data-index="6"></div>
+        <div class="cell" data-index="7"></div>
+        <div class="cell" data-index="8"></div>
+    </div>
+
+    <div class="controls">
+        <button id="roll-btn" onclick="rollDice()">サイコロを振る 🎲</button>
+        <button onclick="resetGame()" style="background-color: #95a5a6; width: 100%; margin-top: 10px;">リセット</button>
+    </div>
+
+    <script>
+        // ゲームの状態管理
+        let currentPlayer = 'X';
+        let gameActive = true;
+        let board = ['', '', '', '', '', '', '', '', ''];
+        let currentRoll = 0;
+        let waitingForMove = false; // サイコロを振った後、配置待ちの状態か
+
+        // DOM要素の取得
+        const statusDisplay = document.getElementById('status');
+        const diceResultDisplay = document.getElementById('dice-result');
+        const rollBtn = document.getElementById('roll-btn');
+        const cells = document.querySelectorAll('.cell');
+
+        // サイコロの目と対応するインデックスのマッピング
+        // 1: 下の行 (インデックス 6,7,8)
+        // 2: 中の行 (インデックス 3,4,5)
+        // 3: 上の行 (インデックス 0,1,2)
+        // 4: 左の列 (インデックス 0,3,6)
+        // 5: 中の列 (インデックス 1,4,7)
+        // 6: 右の列 (インデックス 2,5,8)
+        const diceMapping = {
+            1: [6, 7, 8],
+            2: [3, 4, 5],
+            3: [0, 1, 2],
+            4: [0, 3, 6],
+            5: [1, 4, 7],
+            6: [2, 5, 8]
+        };
+
+        // 勝利条件（通常の三目並べと同じ）
+        const winningConditions = [
+            [0, 1, 2], [3, 4, 5], [6, 7, 8], // 横
+            [0, 3, 6], [1, 4, 7], [2, 5, 8], // 縦
+            [0, 4, 8], [2, 4, 6]             // 斜め
+        ];
+
+        // セルにクリックイベントを追加
+        cells.forEach(cell => {
+            cell.addEventListener('click', handleCellClick);
+        });
+
+        // サイコロを振る処理
+        function rollDice() {
+            if (!gameActive || waitingForMove) return;
+
+            // 1〜6のランダムな数字
+            currentRoll = Math.floor(Math.random() * 6) + 1;
+            
+            diceResultDisplay.textContent = `出た目: ${currentRoll}`;
+            
+            // 置ける場所があるかチェック
+            const validIndices = diceMapping[currentRoll];
+            const availableMoves = validIndices.filter(index => board[index] === '');
+
+            if (availableMoves.length > 0) {
+                // 置ける場所がある場合
+                waitingForMove = true;
+                rollBtn.disabled = true; // 配置するまでボタン無効
+                highlightPlayableCells(validIndices);
+                statusDisplay.textContent = `手番: ${currentPlayer} (配置してください)`;
+            } else {
+                // 置ける場所がない場合（パス）
+                diceResultDisplay.textContent = `出た目: ${currentRoll} (置ける場所がありません)`;
+                setTimeout(() => {
+                    switchPlayer(); // 自動で交代
+                }, 1500);
+            }
+        }
+
+        // 置けるマスをハイライト表示
+        function highlightPlayableCells(indices) {
+            cells.forEach(cell => cell.classList.remove('playable'));
+            
+            indices.forEach(index => {
+                if (board[index] === '') {
+                    const targetCell = document.querySelector(`.cell[data-index="${index}"]`);
+                    targetCell.classList.add('playable');
+                }
+            });
+        }
+
+        // マスをクリックした時の処理
+        function handleCellClick(e) {
+            const clickedCell = e.target;
+            const clickedCellIndex = parseInt(clickedCell.getAttribute('data-index'));
+
+            // ゲーム終了済み、まだ振っていない、または置けるマスでない場合は無視
+            if (!gameActive || !waitingForMove || !clickedCell.classList.contains('playable')) {
+                return;
+            }
+
+            // 盤面更新
+            updateCell(clickedCell, clickedCellIndex);
+            checkResult();
+        }
+
+        function updateCell(cell, index) {
+            board[index] = currentPlayer;
+            cell.textContent = currentPlayer;
+            cell.classList.add(currentPlayer.toLowerCase()); // 色付け用クラス
+            
+            // ハイライト解除
+            cells.forEach(c => c.classList.remove('playable'));
+            waitingForMove = false;
+            rollBtn.disabled = false;
+        }
+
+        function switchPlayer() {
+            currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
+            statusDisplay.textContent = `手番: ${currentPlayer}`;
+            if (!waitingForMove) {
+                diceResultDisplay.textContent = `サイコロを振ってください`;
+            }
+        }
+
+        function checkResult() {
+            let roundWon = false;
+
+            for (let i = 0; i < winningConditions.length; i++) {
+                const winCondition = winningConditions[i];
+                let a = board[winCondition[0]];
+                let b = board[winCondition[1]];
+                let c = board[winCondition[2]];
+
+                if (a === '' || b === '' || c === '') {
+                    continue;
+                }
+                if (a === b && b === c) {
+                    roundWon = true;
+                    break;
+                }
+            }
+
+            if (roundWon) {
+                statusDisplay.textContent = `勝者: ${currentPlayer}！ 🎉`;
+                diceResultDisplay.textContent = "ゲーム終了";
+                gameActive = false;
+                rollBtn.disabled = true;
+                return;
+            }
+
+            // 引き分け判定（盤面が全て埋まった場合）
+            if (!board.includes('')) {
+                statusDisplay.textContent = `引き分け！`;
+                gameActive = false;
+                rollBtn.disabled = true;
+                return;
+            }
+
+            switchPlayer();
+        }
+
+        function resetGame() {
+            currentPlayer = 'X';
+            gameActive = true;
+            waitingForMove = false;
+            board = ['', '', '', '', '', '', '', '', ''];
+            currentRoll = 0;
+            
+            statusDisplay.textContent = `手番: X (先手)`;
+            diceResultDisplay.textContent = `サイコロを振ってください`;
+            rollBtn.disabled = false;
+
+            cells.forEach(cell => {
+                cell.textContent = '';
+                cell.classList.remove('x', 'o', 'playable');
+            });
+        }
+    </script>
+</body>
+</html>
