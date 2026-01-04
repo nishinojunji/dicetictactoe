@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>サイコロ三目並べ vs AI</title>
+    <title>サイコロ三目並べ（スコア機能付き）</title>
     <style>
         body {
             font-family: 'Helvetica Neue', Arial, sans-serif;
@@ -15,7 +15,26 @@
             margin-top: 20px;
         }
 
-        h1 { margin-bottom: 10px; }
+        h1 { margin-bottom: 5px; }
+
+        /* スコアボードのデザイン */
+        .score-board {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #2c3e50;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+            font-weight: bold;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            width: 320px;
+            box-sizing: border-box;
+        }
+
+        .score-item { margin: 0 10px; }
 
         .game-info {
             margin-bottom: 15px;
@@ -25,6 +44,7 @@
             border-radius: 8px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
             width: 320px;
+            box-sizing: border-box;
         }
 
         .status { font-size: 1.2em; font-weight: bold; margin-bottom: 10px; }
@@ -42,7 +62,7 @@
             100% { opacity: 1; }
         }
 
-        /* 盤面のグリッドレイアウト */
+        /* 盤面 */
         .board-container {
             display: grid;
             grid-template-columns: 40px 80px 80px 80px;
@@ -76,7 +96,6 @@
         .cell.x { color: #e74c3c; }
         .cell.o { color: #3498db; }
 
-        /* 人間が操作可能な時のスタイル */
         .cell.playable {
             background-color: #e8f5e9;
             border-color: #4caf50;
@@ -85,14 +104,13 @@
         }
         .cell.playable:hover { background-color: #c8e6c9; }
 
-        /* CPU思考中のハイライト */
         .cell.cpu-thinking {
             background-color: #fff3e0;
             border-color: #ff9800;
         }
 
+        /* ボタン類 */
         button, select {
-            margin-top: 10px;
             padding: 10px 20px;
             font-size: 1em;
             cursor: pointer;
@@ -118,10 +136,19 @@
             width: 100%;
             font-size: 1.2em;
             font-weight: bold;
-            margin-top: 0;
+            margin-bottom: 10px;
         }
 
         .controls { width: 320px; margin-top: 10px; }
+        
+        /* リセットボタンエリア */
+        .reset-area {
+            display: flex;
+            gap: 10px;
+        }
+        .reset-area button {
+            flex: 1;
+        }
 
     </style>
 </head>
@@ -129,11 +156,17 @@
 
     <h1>サイコロ三目並べ</h1>
 
-    <div class="controls">
-        <select id="mode-select" onchange="resetGame()">
+    <div class="controls" style="margin-top: 0;">
+        <select id="mode-select" onchange="changeMode()">
             <option value="pve">CPU対戦 (あなたが先手)</option>
             <option value="pvp">2人対戦 (ローカル)</option>
         </select>
+    </div>
+
+    <div class="score-board">
+        <span class="score-item" id="score-display-x">あなた: 0勝</span>
+        -
+        <span class="score-item" id="score-display-o">CPU: 0勝</span>
     </div>
 
     <div class="game-info">
@@ -165,23 +198,33 @@
 
     <div class="controls">
         <button id="roll-btn" onclick="humanRollDice()">サイコロを振る 🎲</button>
-        <button onclick="resetGame()" style="background-color: #95a5a6; width: 100%;">リセット</button>
+        
+        <div class="reset-area">
+            <button onclick="resetGame()" style="background-color: #7f8c8d;">盤面リセット</button>
+            <button onclick="resetScores()" style="background-color: #c0392b;">カウントリセット</button>
+        </div>
     </div>
 
     <script>
-        let currentPlayer = 'X'; // X:先手, O:後手
+        let currentPlayer = 'X';
         let gameActive = true;
         let board = ['', '', '', '', '', '', '', '', ''];
         let currentRoll = 0;
         let waitingForMove = false;
-        let currentValidMoves = []; // 現在置ける場所のリスト
-        let gameMode = 'pve'; // 'pvp' or 'pve'
+        let currentValidMoves = [];
+        let gameMode = 'pve';
+
+        // スコア管理用変数
+        let scoreX = 0;
+        let scoreO = 0;
 
         const statusDisplay = document.getElementById('status');
         const diceResultDisplay = document.getElementById('dice-result');
         const rollBtn = document.getElementById('roll-btn');
         const modeSelect = document.getElementById('mode-select');
         const cells = document.querySelectorAll('.cell');
+        const scoreDisplayX = document.getElementById('score-display-x');
+        const scoreDisplayO = document.getElementById('score-display-o');
 
         const diceMapping = {
             1: [6, 7, 8], 2: [3, 4, 5], 3: [0, 1, 2],
@@ -196,14 +239,17 @@
 
         cells.forEach(cell => cell.addEventListener('click', handleCellClick));
 
-        // 人間のサイコロアクション
+        // モード変更時の処理（スコアもリセット）
+        function changeMode() {
+            resetScores(); // 名前が変わるのでスコアもリセット
+            resetGame();
+        }
+
         function humanRollDice() {
-            // ゲーム終了時、配置待ち時、またはCPUターン時は無効
             if (!gameActive || waitingForMove || (gameMode === 'pve' && currentPlayer === 'O')) return;
             executeRoll();
         }
 
-        // 共通サイコロ処理
         function executeRoll() {
             currentRoll = Math.floor(Math.random() * 6) + 1;
             diceResultDisplay.classList.remove('free-move');
@@ -212,19 +258,17 @@
             const validMoves = targetIndices.filter(index => board[index] === '');
 
             if (validMoves.length > 0) {
-                // 通常
                 diceResultDisplay.textContent = `出た目: ${currentRoll}`;
                 setupTurn(validMoves);
             } else {
-                // 救済ルール：どこでも置ける
+                // 救済ルール
                 const allEmptyIndices = board.map((c, i) => c === '' ? i : null).filter(i => i !== null);
-                
                 if (allEmptyIndices.length > 0) {
                     diceResultDisplay.textContent = `出た目: ${currentRoll} (フリー配置！)`;
                     diceResultDisplay.classList.add('free-move');
                     setupTurn(allEmptyIndices);
                 } else {
-                    checkResult(); // 全部埋まってる
+                    checkResult();
                 }
             }
         }
@@ -235,13 +279,10 @@
             rollBtn.disabled = true;
 
             if (gameMode === 'pve' && currentPlayer === 'O') {
-                // CPUのターン：自動思考へ
                 statusDisplay.textContent = `手番: CPU (思考中...)`;
-                // CPUが見ている場所を少しだけハイライト（演出）
                 highlightCells(playableIndices, 'cpu-thinking');
-                setTimeout(executeCpuMove, 1500); // 1.5秒後に配置
+                setTimeout(executeCpuMove, 1500);
             } else {
-                // 人間のターン
                 const playerName = gameMode === 'pve' ? 'あなた' : (currentPlayer === 'X' ? '先手' : '後手');
                 statusDisplay.textContent = `手番: ${currentPlayer} (${playerName}) - 配置してください`;
                 highlightCells(playableIndices, 'playable');
@@ -258,45 +299,33 @@
             });
         }
 
-        // CPUの思考ロジック
         function executeCpuMove() {
             if (!gameActive) return;
 
             let moveIndex;
-            
-            // 1. 勝てる手があるか？
+            // 1. 勝てる手
             moveIndex = findBestMove(currentValidMoves, 'O'); 
-            
-            // 2. 負けそうな手（ブロック）があるか？
-            if (moveIndex === null) {
-                moveIndex = findBestMove(currentValidMoves, 'X'); 
-            }
-
-            // 3. 真ん中が空いていれば取る
-            if (moveIndex === null && currentValidMoves.includes(4)) {
-                moveIndex = 4;
-            }
-
-            // 4. ランダムに選ぶ
+            // 2. ブロック
+            if (moveIndex === null) moveIndex = findBestMove(currentValidMoves, 'X'); 
+            // 3. 中央
+            if (moveIndex === null && currentValidMoves.includes(4)) moveIndex = 4;
+            // 4. ランダム
             if (moveIndex === null) {
                 const randomIndex = Math.floor(Math.random() * currentValidMoves.length);
                 moveIndex = currentValidMoves[randomIndex];
             }
 
-            // 配置実行
             finalizeMove(moveIndex);
         }
 
-        // 勝利またはブロックのための手を探すヘルパー関数
         function findBestMove(validMoves, playerToCheck) {
             for (let index of validMoves) {
-                // 仮に置いてみる
                 board[index] = playerToCheck;
                 if (checkWinCondition(playerToCheck)) {
-                    board[index] = ''; // 元に戻す
+                    board[index] = '';
                     return index;
                 }
-                board[index] = ''; // 元に戻す
+                board[index] = '';
             }
             return null;
         }
@@ -307,9 +336,7 @@
             });
         }
 
-        // 人間のクリック処理
         function handleCellClick(e) {
-            // CPUターン中はクリック無効
             if (gameMode === 'pve' && currentPlayer === 'O') return;
 
             const clickedCell = e.target;
@@ -318,18 +345,15 @@
             if (!gameActive || !waitingForMove || !currentValidMoves.includes(index)) {
                 return;
             }
-
             finalizeMove(index);
         }
 
-        // 共通の配置確定処理
         function finalizeMove(index) {
             board[index] = currentPlayer;
             const cell = document.querySelector(`.cell[data-index="${index}"]`);
             cell.textContent = currentPlayer;
             cell.classList.add(currentPlayer.toLowerCase());
             
-            // ハイライト解除
             cells.forEach(c => c.classList.remove('playable', 'cpu-thinking'));
             waitingForMove = false;
             
@@ -346,6 +370,9 @@
                 diceResultDisplay.classList.remove('free-move');
                 gameActive = false;
                 rollBtn.disabled = true;
+
+                // スコア更新処理
+                updateScore(currentPlayer);
                 return;
             }
 
@@ -360,21 +387,42 @@
             switchPlayer();
         }
 
+        // スコア更新ロジック
+        function updateScore(winner) {
+            if (winner === 'X') {
+                scoreX++;
+            } else if (winner === 'O') {
+                scoreO++;
+            }
+            updateScoreDisplay();
+        }
+
+        // スコア表示更新
+        function updateScoreDisplay() {
+            const xName = gameMode === 'pve' ? 'あなた' : '先手(X)';
+            const oName = gameMode === 'pve' ? 'CPU' : '後手(O)';
+
+            scoreDisplayX.textContent = `${xName}: ${scoreX}勝`;
+            scoreDisplayO.textContent = `${oName}: ${scoreO}勝`;
+        }
+
+        // スコアリセット
+        function resetScores() {
+            scoreX = 0;
+            scoreO = 0;
+            gameMode = modeSelect.value; // モード選択値を取得して名前を正しくセット
+            updateScoreDisplay();
+        }
+
         function switchPlayer() {
             currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
             
             if (gameMode === 'pve' && currentPlayer === 'O') {
-                // CPUのターン開始
                 statusDisplay.textContent = `手番: CPU (サイコロを振っています...)`;
                 diceResultDisplay.textContent = `...`;
-                rollBtn.disabled = true; // 人間は押せない
-                
-                setTimeout(() => {
-                    executeRoll();
-                }, 1000); // 1秒タメてからサイコロ
-
+                rollBtn.disabled = true;
+                setTimeout(() => { executeRoll(); }, 1000);
             } else {
-                // 人間のターン開始
                 const playerName = gameMode === 'pve' ? 'あなた' : (currentPlayer === 'X' ? '先手' : '後手');
                 statusDisplay.textContent = `手番: ${currentPlayer} (${playerName})`;
                 diceResultDisplay.textContent = `サイコロを振ってください`;
@@ -402,7 +450,13 @@
                 cell.textContent = '';
                 cell.classList.remove('x', 'o', 'playable', 'cpu-thinking');
             });
+            
+            // スコア表示も名前を同期するために更新（数は維持）
+            updateScoreDisplay(); 
         }
+
+        // 初期表示設定
+        resetScores();
     </script>
 </body>
 </html>
